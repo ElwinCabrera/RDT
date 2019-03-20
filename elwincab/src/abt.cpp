@@ -103,7 +103,7 @@ void A_input(struct pkt packet){
   link_in_use = false;
   if(!is_valid_pkt(packet)){ printf("A got an invalid ACK pkt, waiting for timer to run out\n");return ; }  // wait for our timer handle retransmissions
 
-  if(packet.acknum == expected_ack) {
+  if(packet.acknum == curr_pkt.acknum) {
     curr_pkt_acked = true;
     stoptimer(A);
 
@@ -156,11 +156,11 @@ void B_input(struct pkt packet){
   
   char data[20];
   memset(data, '\0', 20);
-  struct pkt ackpkt  = make_pkt(-1, expected_ack, data);
+  struct pkt ackpkt  = make_pkt(-1, packet.acknum, data);
   tolayer3(B, ackpkt);
   link_in_use = true;
   
-  printf("Sending ACK#%d pkt to A\n", expected_ack);
+  printf("Sending ACK#%d pkt to A\n", packet.acknum);
 }
 
 /* the following rouytine will be called once (only) before any other */

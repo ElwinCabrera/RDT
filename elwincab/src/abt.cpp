@@ -39,13 +39,23 @@ int duplicate_cnt;
 
 
 int compute_checksum(struct pkt pkt){
-
-  return 0;
+  int checksum =0;
+  for(uint8_t i = 0; i < 20; i++) checksum += pkt.payload[i];
+  checksum += pkt.seqnum;
+  checksum += pkt.acknum;
+  return ~checksum;   // ones compliment 
 }
 
 bool is_valid_pkt(struct pkt pkt){
+  int pkt_checksum=0;
+  
+  for(uint8_t i = 0; i < 20; i++) pkt_checksum += pkt.payload[i];
+  pkt_checksum += pkt.seqnum;
+  pkt_checksum += pkt.acknum;
+  
+  if(pkt.checksum + pkt_checksum == 0xFFFFFFFF) return true;  
 
-  return true;
+  return false;
 }
 
 

@@ -22,7 +22,7 @@
 #define A 0
 #define B 1 
 
-float timeout;
+
 
 using std::queue;
 using std::vector;
@@ -32,11 +32,27 @@ vector<int> seqs_app_recvd;
 vector<bool> pkts_got_acked;
 
 struct pkt curr_pkt;
-bool curr_pkt_acked;
-int expected_ack;
+
 int pktnum;
-bool link_in_use;
+float timeout;
+float pkt_timeout;
+
+bool link_in_use;// this is to simulate the behavior of abt where only one pkt is in link at a time thus this needs the be shared between A and B, b/c in a real situation both will know the status of link
 bool curr_pkt_corrupt;
+bool wait_retrans_ack;
+
+
+void send_curr_pkt_to_b(){
+    stoptimer(A);             //even if its not running , for saftey
+    tolayer3(A, curr_pkt);
+    starttimer(A, timeout);
+    pkt_timeout = get_sim_time() + timeout;
+    link_in_use = true;
+}
+void pop_and_set_curr_pkt(){
+    curr_pkt = pkt_q.front();
+    pkt_q.pop();
+}
 
 bool is_seq_next(int seqnum){
   if( seqnum ==0) return true;
@@ -106,8 +122,9 @@ void A_init(){
   link_in_use = false;
   pktnum =0;
   timeout = 13.5;
-  curr_pkt_acked = true;
   curr_pkt_corrupt = false;
+  wait_retrans_ack = false;
+  pkt_timeout = 0.0;
   for(uint16_t i = 0; i < 1100; i++) pkts_got_acked.push_back(false);
   
   
@@ -127,20 +144,17 @@ void A_output(struct msg message){
   
   if(curr_pkt_corrupt && !link_in_use && is_seq_next(pkt.seqnum)){
     printf("Current pkt corrupted, but link is not in use so trying again\n");
-    tolayer3(A, curr_pkt);
-    starttimer(A, timeout);
-    curr_pkt_acked = false;
-    link_in_use = true;
+    send_curr_pkt_to_b();
   }
 
 
-  if(!link_in_use && !curr_pkt_corrupt && is_seq_next(pkt_q.front().seqnum)  ){
+  if( (!link_in_use && !curr_pkt_corrupt && is_seq_next(pkt_q.front().seqnum) )  || 
+      (link_in_use && wait_retrans_ack && get_sim_time() > pkt_timeout && is_seq_next(pkt_q.front().seqnum)) 
+    ){
+
     printf("Link not in use\nPopping pkt from queue and sending to link  and startig timer\n"); // debug
-    curr_pkt = pkt_q.front();
-    pkt_q.pop();
-    tolayer3(A, curr_pkt);
-    starttimer(A, timeout);
-    link_in_use = true;
+    pop_and_set_curr_pkt();
+    send_curr_pkt_to_b();
   }
 
   
@@ -160,28 +174,20 @@ void A_input(struct pkt packet){
   }  // wait for our timer handle retransmissions
 
   curr_pkt_corrupt = false;
+
   if(packet.acknum == curr_pkt.acknum) {
-    curr_pkt_acked = true;
     stoptimer(A);
-    printf("pkt acked\n");
-  
+    printf("Stopping timer pkt acked\n");
+
     pkts_got_acked.at(curr_pkt.seqnum) = true;
-    if((pkts_got_acked.size()-1 == curr_pkt.seqnum) )pkts_got_acked.push_back(true);
 
     if(!pkt_q.empty() && is_seq_next(pkt_q.front().seqnum)) {
-      curr_pkt = pkt_q.front();
       
+      pop_and_set_curr_pkt();      
       printf("Popping pkt from queue and sending to link and startig timer (seq#%d, ack#%d)\n",curr_pkt.seqnum, curr_pkt.acknum);
-
-      pkt_q.pop();
-      tolayer3(A, curr_pkt);
-      starttimer(A, timeout);
-      link_in_use = true;
-      curr_pkt_acked = false;
+      send_curr_pkt_to_b();
     }
-  } else {
-    //link_in_use = true;
-  }
+  } 
   
   
 }
@@ -189,15 +195,22 @@ void A_input(struct pkt packet){
 /* called when A's timer goes off */
 void A_timerinterrupt(){
   printf("A's timer ran out for pkt, retransmitting (seq#%d, ack#%d)\n",curr_pkt.seqnum, curr_pkt.acknum);
-  link_in_use = false;
-  tolayer3(A, curr_pkt);
-  starttimer(A, timeout);
-  curr_pkt_acked = false;
-
-  link_in_use = true;
+  send_curr_pkt_to_b();
+   wait_retrans_ack = true;
 }  
 
 /* Note that with simplex transfer from a-to-B, there is no B_output() */
+
+
+
+
+
+
+
+
+
+
+
 
 /* called from layer 3, when a packet arrives for layer 4 at B*/
 void B_input(struct pkt packet){

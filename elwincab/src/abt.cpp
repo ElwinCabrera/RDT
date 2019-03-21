@@ -22,21 +22,47 @@
 #define A 0
 #define B 1 
 
-int timeout;
+float timeout;
 
 using std::queue;
 using std::vector;
 
 queue<struct pkt> pkt_q;
 vector<int> seqs_app_recvd;
+vector<bool> pkts_got_acked;
 
 struct pkt curr_pkt;
 bool curr_pkt_acked;
 int expected_ack;
 int pktnum;
 bool link_in_use;
-int duplicate_cnt;
+bool curr_pkt_corrupt;
 
+bool is_seq_next(int seqnum){
+  if( seqnum ==0) return true;
+  bool last_entry = (bool) pkts_got_acked.at(seqnum-1);
+  bool next_entry = (bool) pkts_got_acked.at(seqnum+1);
+  bool curr_entry = (bool) pkts_got_acked.at(seqnum);
+
+  int acked_vec_size = pkts_got_acked.size();
+
+  
+
+  printf("ack vec @ %d, last_entry = %d, curr_entry= %d, next_entry = %d\n", seqnum, last_entry, curr_entry ,next_entry);
+
+  
+  if(last_entry && !curr_entry && !next_entry) return true;
+  
+  return false; 
+
+}
+void print_ack_vec(){
+  printf("vec size:%d {", pkts_got_acked.size());
+  for(size_t i = 0; i < pkts_got_acked.size(); i++){
+    printf("%d,", (bool) pkts_got_acked.at(i));
+  }
+  printf("}\n");
+}
 
 int compute_checksum(struct pkt pkt){
   int checksum =0;
@@ -78,32 +104,47 @@ struct pkt make_pkt(int seqnum, int acknum,char data[20]){
 /* entity A routines are called. You can use it to do any initialization */
 void A_init(){
   link_in_use = false;
-  expected_ack = 0;
   pktnum =0;
-  timeout = 10;
-  duplicate_cnt = 0;
-  curr_pkt_acked = false;
+  timeout = 13.5;
+  curr_pkt_acked = true;
+  curr_pkt_corrupt = false;
+  for(uint16_t i = 0; i < 1100; i++) pkts_got_acked.push_back(false);
+  
+  
+  
 }
 
 /* called from layer 5, passed the data to be sent to other side */
 void A_output(struct msg message){
+  //print_ack_vec();
 
-  struct pkt pkt = make_pkt(pktnum, expected_ack, message.data);
-  printf("NEW Incomming pkt\nMaking and pushing pkt to queue (seq#%d, ack#%d)\n",pktnum, expected_ack); //debug
+  struct pkt pkt = make_pkt(pktnum, pktnum, message.data);
+  printf("NEW Incomming pkt\nMaking and pushing pkt to queue (seq#%d, ack#%d)\n",pktnum, pktnum); //debug
   pkt_q.push(pkt);
 
-  if(link_in_use) printf("Link is in use, cant send pkt yet keeping it in queue (seq#%d, ack#%d)\n",pktnum, expected_ack);  // debug
+  if(link_in_use) printf("Link is in use, cant send pkt yet keeping it in queue\n");  // debug
+  if(curr_pkt_corrupt) printf("Trying to resolve a currently corrupt pkt in link, please wait to send \n"); 
+  
+  if(curr_pkt_corrupt && !link_in_use && is_seq_next(pkt.seqnum)){
+    printf("Current pkt corrupted, but link is not in use so trying again\n");
+    tolayer3(A, curr_pkt);
+    starttimer(A, timeout);
+    curr_pkt_acked = false;
+    link_in_use = true;
+  }
 
-  if(!link_in_use){
-    printf("Link not in use\nPopping pkt from queue and sending to link  and startig timer (seq#%d, ack#%d)\n",pktnum, expected_ack); // debug
+
+  if(!link_in_use && !curr_pkt_corrupt && is_seq_next(pkt_q.front().seqnum)  ){
+    printf("Link not in use\nPopping pkt from queue and sending to link  and startig timer\n"); // debug
     curr_pkt = pkt_q.front();
     pkt_q.pop();
     tolayer3(A, curr_pkt);
     starttimer(A, timeout);
     link_in_use = true;
   }
+
+  
   pktnum++;
-  expected_ack = (expected_ack) ? 0:1;
  
 }
 
@@ -111,21 +152,35 @@ void A_output(struct msg message){
 void A_input(struct pkt packet){
   printf("A got an ACK pkt (seq#%d, ack#%d)\n",packet.seqnum, packet.acknum);
   link_in_use = false;
-  if(!is_valid_pkt(packet)){ printf("A got an invalid ACK pkt, waiting for timer to run out\n");return ; }  // wait for our timer handle retransmissions
 
+  if(!is_valid_pkt(packet)){ 
+    printf("A got an invalid ACK pkt, waiting for timer to run out\n");
+    //curr_pkt_corrupt = true; 
+    return ; 
+  }  // wait for our timer handle retransmissions
+
+  curr_pkt_corrupt = false;
   if(packet.acknum == curr_pkt.acknum) {
     curr_pkt_acked = true;
     stoptimer(A);
+    printf("pkt acked\n");
+  
+    pkts_got_acked.at(curr_pkt.seqnum) = true;
+    if((pkts_got_acked.size()-1 == curr_pkt.seqnum) )pkts_got_acked.push_back(true);
 
-    if(!pkt_q.empty()) {
+    if(!pkt_q.empty() && is_seq_next(pkt_q.front().seqnum)) {
       curr_pkt = pkt_q.front();
+      
+      printf("Popping pkt from queue and sending to link and startig timer (seq#%d, ack#%d)\n",curr_pkt.seqnum, curr_pkt.acknum);
+
       pkt_q.pop();
       tolayer3(A, curr_pkt);
       starttimer(A, timeout);
       link_in_use = true;
       curr_pkt_acked = false;
-      printf("Popping pkt from queue and sending to link and startig timer (seq#%d, ack#%d)\n",curr_pkt.seqnum, curr_pkt.acknum);
     }
+  } else {
+    //link_in_use = true;
   }
   
   
@@ -137,6 +192,9 @@ void A_timerinterrupt(){
   link_in_use = false;
   tolayer3(A, curr_pkt);
   starttimer(A, timeout);
+  curr_pkt_acked = false;
+
+  link_in_use = true;
 }  
 
 /* Note that with simplex transfer from a-to-B, there is no B_output() */
@@ -144,25 +202,32 @@ void A_timerinterrupt(){
 /* called from layer 3, when a packet arrives for layer 4 at B*/
 void B_input(struct pkt packet){
   printf("B got pkt (seq#%d, ack#%d)\n",packet.seqnum, packet.acknum);
-  link_in_use = false;
+  //link_in_use = false;
 
-  if(!is_valid_pkt(packet)){ printf("pkt not valid\n"); return;  }
+  if(!is_valid_pkt(packet)){ 
+    printf("pkt not valid\n");
+    curr_pkt_corrupt = true; 
+    return;  
+  }
+  link_in_use = false;
+  curr_pkt_corrupt = false;
 
   bool pkt_is_duplicate = false;
   for(uint i = 0; i < seqs_app_recvd.size(); i++){
     if(seqs_app_recvd.at(i) == packet.seqnum){
       printf("pkt is duplicate!\n");
       pkt_is_duplicate = true;
-      duplicate_cnt++;
       break;
     }
   }
 
   if(!pkt_is_duplicate){ 
+    printf("Sending pkt to application\n"); 
     tolayer5(B, packet.payload);
     seqs_app_recvd.push_back(packet.seqnum);
-    printf("Sending pkt to application\n"); 
   } 
+
+  printf("Sending ACK#%d pkt to A\n", packet.acknum);
   
   char data[20];
   memset(data, '\0', 20);
@@ -170,7 +235,7 @@ void B_input(struct pkt packet){
   tolayer3(B, ackpkt);
   link_in_use = true;
   
-  printf("Sending ACK#%d pkt to A\n", packet.acknum);
+  
 }
 
 /* the following rouytine will be called once (only) before any other */

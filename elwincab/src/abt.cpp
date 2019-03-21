@@ -23,7 +23,6 @@
 #define B 1 
 
 
-
 using std::queue;
 using std::vector;
 
@@ -42,75 +41,14 @@ bool curr_pkt_corrupt;
 bool wait_retrans_ack;
 
 
-void send_curr_pkt_to_b(){
-    stoptimer(A);             //even if its not running , for saftey
-    tolayer3(A, curr_pkt);
-    starttimer(A, timeout);
-    pkt_timeout = get_sim_time() + timeout;
-    link_in_use = true;
-}
-void pop_and_set_curr_pkt(){
-    curr_pkt = pkt_q.front();
-    pkt_q.pop();
-}
+void send_curr_pkt_to_b();
+void pop_and_set_curr_pkt();
+bool is_seq_next(int seqnum);
+int compute_checksum(struct pkt pkt);
+bool is_valid_pkt(struct pkt pkt);
+struct pkt make_pkt(int seqnum, int acknum,char data[20]);
 
-bool is_seq_next(int seqnum){
-  if( seqnum ==0) return true;
-  bool last_entry = (bool) pkts_got_acked.at(seqnum-1);
-  bool next_entry = (bool) pkts_got_acked.at(seqnum+1);
-  bool curr_entry = (bool) pkts_got_acked.at(seqnum);
-
-  int acked_vec_size = pkts_got_acked.size();
-
-  
-
-  printf("ack vec @ %d, last_entry = %d, curr_entry= %d, next_entry = %d\n", seqnum, last_entry, curr_entry ,next_entry);
-
-  
-  if(last_entry && !curr_entry && !next_entry) return true;
-  
-  return false; 
-
-}
-void print_ack_vec(){
-  printf("vec size:%d {", pkts_got_acked.size());
-  for(int i = 0; i < pkts_got_acked.size(); i++){
-    printf("%d,", (bool) pkts_got_acked.at(i));
-  }
-  printf("}\n");
-}
-
-int compute_checksum(struct pkt pkt){
-  int checksum =0;
-  for(int i = 0; i < 20; i++) checksum += pkt.payload[i];
-  checksum += pkt.seqnum;
-  checksum += pkt.acknum;
-  return ~checksum;   // ones compliment 
-}
-
-bool is_valid_pkt(struct pkt pkt){
-  int pkt_checksum=0;
-  
-  for(int i = 0; i < 20; i++) pkt_checksum += pkt.payload[i];
-  pkt_checksum += pkt.seqnum;
-  pkt_checksum += pkt.acknum;
-  
-  if(pkt.checksum + pkt_checksum == 0xFFFFFFFF) return true;  
-
-  return false;
-}
-
-
-struct pkt make_pkt(int seqnum, int acknum,char data[20]){
-  struct pkt pkt;
-  pkt.seqnum = seqnum;
-  pkt.acknum = acknum;
-  for(int i = 0; i < 20; i++) pkt.payload[i] = data[i];
-  pkt.checksum = compute_checksum(pkt);
-  return pkt; 
-  
-}
-
+void print_ack_vec();
 
 
 
@@ -199,19 +137,12 @@ void A_timerinterrupt(){
    wait_retrans_ack = true;
 }  
 
+
+
+
+
+
 /* Note that with simplex transfer from a-to-B, there is no B_output() */
-
-
-
-
-
-
-
-
-
-
-
-
 /* called from layer 3, when a packet arrives for layer 4 at B*/
 void B_input(struct pkt packet){
   printf("B got pkt (seq#%d, ack#%d)\n",packet.seqnum, packet.acknum);
@@ -257,5 +188,87 @@ void B_init(){
 
 }
 
+
+
+
+
+
+/*********************** HELPER FUNCTIONS *****************************/
+
+
+
+
+
+void send_curr_pkt_to_b(){
+    stoptimer(A);             //even if its not running , for saftey
+    tolayer3(A, curr_pkt);
+    starttimer(A, timeout);
+    pkt_timeout = get_sim_time() + timeout;
+    link_in_use = true;
+}
+void pop_and_set_curr_pkt(){
+    curr_pkt = pkt_q.front();
+    pkt_q.pop();
+}
+
+bool is_seq_next(int seqnum){
+  if( seqnum ==0) return true;
+  bool last_entry = (bool) pkts_got_acked.at(seqnum-1);
+  bool next_entry = (bool) pkts_got_acked.at(seqnum+1);
+  bool curr_entry = (bool) pkts_got_acked.at(seqnum);
+
+  int acked_vec_size = pkts_got_acked.size();
+
+  printf("ack vec @ %d, last_entry = %d, curr_entry= %d, next_entry = %d\n", seqnum, last_entry, curr_entry ,next_entry);
+  
+  if(last_entry && !curr_entry && !next_entry) return true;
+  
+  return false; 
+
+}
+
+
+int compute_checksum(struct pkt pkt){
+  int checksum =0;
+  for(int i = 0; i < 20; i++) checksum += pkt.payload[i];
+  checksum += pkt.seqnum;
+  checksum += pkt.acknum;
+  return ~checksum;   // ones compliment 
+}
+
+bool is_valid_pkt(struct pkt pkt){
+  int pkt_checksum=0;
+  
+  for(int i = 0; i < 20; i++) pkt_checksum += pkt.payload[i];
+  pkt_checksum += pkt.seqnum;
+  pkt_checksum += pkt.acknum;
+  
+  if(pkt.checksum + pkt_checksum == 0xFFFFFFFF) return true;  
+
+  return false;
+}
+
+
+struct pkt make_pkt(int seqnum, int acknum,char data[20]){
+  struct pkt pkt;
+  pkt.seqnum = seqnum;
+  pkt.acknum = acknum;
+  for(int i = 0; i < 20; i++) pkt.payload[i] = data[i];
+  pkt.checksum = compute_checksum(pkt);
+  return pkt; 
+}
+
+
+
+
+/*********************DEBUG***********************/
+
+void print_ack_vec(){ 
+  printf("vec size:%d {", pkts_got_acked.size());
+  for(int i = 0; i < pkts_got_acked.size(); i++){
+    printf("%d,", (bool) pkts_got_acked.at(i));
+  }
+  printf("}\n");
+}
 
 

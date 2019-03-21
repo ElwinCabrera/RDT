@@ -74,7 +74,7 @@ bool is_seq_next(int seqnum){
 }
 void print_ack_vec(){
   printf("vec size:%d {", pkts_got_acked.size());
-  for(size_t i = 0; i < pkts_got_acked.size(); i++){
+  for(int i = 0; i < pkts_got_acked.size(); i++){
     printf("%d,", (bool) pkts_got_acked.at(i));
   }
   printf("}\n");
@@ -82,7 +82,7 @@ void print_ack_vec(){
 
 int compute_checksum(struct pkt pkt){
   int checksum =0;
-  for(uint8_t i = 0; i < 20; i++) checksum += pkt.payload[i];
+  for(int i = 0; i < 20; i++) checksum += pkt.payload[i];
   checksum += pkt.seqnum;
   checksum += pkt.acknum;
   return ~checksum;   // ones compliment 
@@ -91,7 +91,7 @@ int compute_checksum(struct pkt pkt){
 bool is_valid_pkt(struct pkt pkt){
   int pkt_checksum=0;
   
-  for(uint8_t i = 0; i < 20; i++) pkt_checksum += pkt.payload[i];
+  for(int i = 0; i < 20; i++) pkt_checksum += pkt.payload[i];
   pkt_checksum += pkt.seqnum;
   pkt_checksum += pkt.acknum;
   
@@ -105,7 +105,7 @@ struct pkt make_pkt(int seqnum, int acknum,char data[20]){
   struct pkt pkt;
   pkt.seqnum = seqnum;
   pkt.acknum = acknum;
-  for(uint8_t i = 0; i < 20; i++) pkt.payload[i] = data[i];
+  for(int i = 0; i < 20; i++) pkt.payload[i] = data[i];
   pkt.checksum = compute_checksum(pkt);
   return pkt; 
   
@@ -125,7 +125,7 @@ void A_init(){
   curr_pkt_corrupt = false;
   wait_retrans_ack = false;
   pkt_timeout = 0.0;
-  for(uint16_t i = 0; i < 1100; i++) pkts_got_acked.push_back(false);
+  for(int i = 0; i < 1100; i++) pkts_got_acked.push_back(false);
   
   
   

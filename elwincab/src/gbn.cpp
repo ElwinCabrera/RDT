@@ -33,16 +33,7 @@ vector<struct pkt> window_pkts;
 
 int pktnum;
 float timeout;
-int first_in_win_timeout;
-
-int pkts_in_link;
-int base_seq;
 int win_idx;
-int max_seq;
-
-bool link_at_capacity;
-bool curr_pkt_corrupt;
-bool wait_retrans_ack;
 
 bool is_pkt_in_win(int pktnum);
 void shift_win_right();
@@ -65,17 +56,8 @@ void print_window();
 void A_init(){
   pktnum =0;
   timeout = 13.5;
-  first_in_win_timeout = 0;
-  curr_pkt_corrupt = false;
-  wait_retrans_ack = false;
-  base_seq = 0; 
   win_idx = 0;
-  max_seq = getwinsize();
   for(int i = 0; i < 1100; i++) pkts_got_acked.push_back(false);
-  
-  
-
-  
   for(int i = 0; i < getwinsize(); i++) window_pkts.push_back( make_empty_pkt(-1,-1) );
 
 }
@@ -101,7 +83,6 @@ void A_output(struct msg message){
       printf("pkt is first in window so resetting timer\n");
       stoptimer(A);
       starttimer(A, timeout);
-      first_in_win_timeout = get_sim_time() + timeout;
     }
     send_next_in_q_to_b();
     win_idx++;
@@ -159,13 +140,7 @@ void A_input(struct pkt packet){
     if(pkts_got_acked.at(window_pkts.at(0).seqnum)) send_next_in_q_to_b();
     
   }
-  if(window_pkts.at(0).acknum != packet.acknum && window_pkts.at(0).seqnum != 0 ) { starttimer(A, timeout); first_in_win_timeout = get_sim_time() + timeout; }
-  
-  /*if(first_in_win_timeout > get_sim_time() ){
-    send_window();
-    first_in_win_timeout = get_sim_time() + timeout;
-  }*/
-    
+  if(window_pkts.at(0).acknum != packet.acknum && window_pkts.at(0).seqnum != 0 ) starttimer(A, timeout); 
   
 
   printf("\nWindow after win_idx = %d\n",win_idx);
@@ -252,7 +227,6 @@ void shift_win_right(){
     window_pkts.at(i-1) = pkt;
   }
   window_pkts.at(window_pkts.size()-1) = make_empty_pkt(-1,-1);
-  max_seq++;
   win_idx--;
 }
 

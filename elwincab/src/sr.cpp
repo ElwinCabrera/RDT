@@ -22,24 +22,27 @@
 #define A 0
 #define B 1 
 
+struct pkt_info{
+  bool pkt_acked;
+  int timeout;
+  struct pkt pkt;
+};
+
+
 
 using std::queue;
 using std::vector;
 
-queue<struct pkt> pkt_q;
+queue<struct pkt_info> pkt_q;
+vector<struct pkt_info> window_pkts_a;
+vector<struct pkt_info> window_pkts_b;
 vector<int> seqs_app_recvd;
 vector<bool> pkts_got_acked;
-vector<struct pkt> window_pkts_a;
-vector<struct pkt> window_pkts_b;
 
 int pktnum;
 float timeout;
 int win_idx;
 
-
-bool link_at_capacity;
-bool curr_pkt_corrupt;
-bool wait_retrans_ack;
 
 bool is_pkt_in_win(int pktnum);
 void shift_win_right();
@@ -50,6 +53,8 @@ int compute_checksum(struct pkt pkt);
 bool is_valid_pkt(struct pkt pkt);
 struct pkt make_pkt(int seqnum, int acknum,char data[20]);
 struct pkt make_empty_pkt(int seqnum, int acknum);
+struct pkt_info make_pkt_info(int seqnum, int acknum, char data[20]);
+struct pkt_info make_empty_pkt_info(int seqnum, int acknum);
 
 void print_ack_vec();
 void print_window();
@@ -62,22 +67,17 @@ void print_window();
 void A_init(){
   pktnum =0;
   timeout = 13.5;
-  curr_pkt_corrupt = false;
-  wait_retrans_ack = false; 
   win_idx = 0;
   for(int i = 0; i < 1100; i++) pkts_got_acked.push_back(false);
-  
-  
-
-  
-  for(int i = 0; i < getwinsize(); i++) window_pkts_a.push_back( make_empty_pkt(-1,-1) );
+  for(int i = 0; i < getwinsize(); i++) window_pkts_a.push_back( make_empty_pkt_info(-1,-1) );
+  starttimer(A,timeout);
 
 }
 
 /* called from layer 5, passed the data to be sent to other side */
 void A_output(struct msg message){
 
-  struct pkt pkt = make_pkt(pktnum, pktnum, message.data);
+  struct pkt_info pkt = make_pkt_info(pktnum, pktnum, message.data);
   printf("NEW Incomming pkt\nMaking and pushing pkt to queue (seq#%d, ack#%d)\n",pktnum, pktnum); //debug
   pkt_q.push(pkt);
 
@@ -90,8 +90,8 @@ void A_output(struct msg message){
   if( win_idx < getwinsize() ){
     printf("poping and sending to b, pkt is now part of our window @ #%d\n",win_idx );
    
-    window_pkts_a.at(win_idx )  = pkt;
-    if(pkt.seqnum == window_pkts_a.at(0).seqnum){
+    window_pkts_a.at(win_idx)  = pkt;
+    if(pkt.seqnum == window_pkts_a.at(0).pkt.seqnum){
       printf("pkt is first in window so resetting timer\n");
       stoptimer(A);
       starttimer(A, timeout);
@@ -129,7 +129,7 @@ void A_input(struct pkt packet){
   if(packet.acknum > -1) pkts_got_acked.at(packet.acknum) = true;
 
   for(int i = 0; i < window_pkts_a.size(); i++){
-    int seq_in_win = window_pkts_a.at(i).seqnum;
+    int seq_in_win = window_pkts_a.at(i).pkt.seqnum;
     if(seq_in_win == -1 ) continue;
     if(pkts_got_acked.at(seq_in_win) ) {
       printf("Shifting window right\n");
@@ -137,7 +137,7 @@ void A_input(struct pkt packet){
       i--;
     }
   }
-  if(window_pkts_a.at(0).seqnum == packet.acknum && pkts_got_acked.at(packet.acknum)) shift_win_right();
+  if(window_pkts_a.at(0).pkt.seqnum == packet.acknum && pkts_got_acked.at(packet.acknum)) shift_win_right();
 
     
   while( !pkt_q.empty() && win_idx < getwinsize() ){
@@ -148,18 +148,12 @@ void A_input(struct pkt packet){
     printf("Adding pkt to window and sending to b (seq#%d, ack#%d)\n", pkt_q.front().seqnum, pkt_q.front().acknum);
     window_pkts_a.at(win_idx) = pkt_q.front();
     win_idx++;
-    if(window_pkts_a.at(0).seqnum == -1) {pkt_q.pop(); continue; }
-    if(pkts_got_acked.at(window_pkts_a.at(0).seqnum)) send_next_in_q_to_b();
+    if(window_pkts_a.at(0).pkt.seqnum == -1) {pkt_q.pop(); continue; }
+    if(pkts_got_acked.at(window_pkts_a.at(0).pkt.seqnum)) send_next_in_q_to_b();
     
   }
-  if(window_pkts_a.at(0).acknum != packet.acknum && window_pkts_a.at(0).seqnum != 0 ) starttimer(A, timeout); 
-  
-  /*if(first_in_win_timeout > get_sim_time() ){
-    send_window();
-    first_in_win_timeout = get_sim_time() + timeout;
-  }*/
+  if(window_pkts_a.at(0).pkt.acknum != packet.acknum && window_pkts_a.at(0).pkt.seqnum != 0 ) starttimer(A, timeout); 
     
-  
 
   printf("\nWindow after win_idx = %d\n",win_idx);
   print_window();
@@ -171,6 +165,7 @@ void A_timerinterrupt(){
   
   print_window();
   send_window();
+  starttimer(A,timeout);
 }  
 
 
@@ -231,28 +226,27 @@ void B_init(){
 
 
 bool is_pkt_in_win(int pktnum){
-  for(int i = 0; i < window_pkts_a.size(); i++) if(window_pkts_a.at(i).seqnum == pktnum) return true;
+  for(int i = 0; i < window_pkts_a.size(); i++) if(window_pkts_a.at(i).pkt.seqnum == pktnum) return true;
   return false;
 }
 
 
 void shift_win_right(){
-  if(window_pkts_a.at(0).seqnum == -1 || window_pkts_a.empty()) return;
+  if(window_pkts_a.at(0).pkt.seqnum == -1 || window_pkts_a.empty()) return;
   window_pkts_a.at(0) = make_empty_pkt(-1,-1);
 
   for(int i = 1; i < window_pkts_a.size(); i++) {
-    struct pkt pkt = window_pkts_a.at(i);
+    struct pkt_in pkt = window_pkts_a.at(i);
     window_pkts_a.at(i-1) = pkt;
   }
-  window_pkts_a.at(window_pkts_a.size()-1) = make_empty_pkt(-1,-1);
-  max_seq++;
+  window_pkts_a.at(window_pkts_a.size()-1) = make_empty_pkt_info(-1,-1);
   win_idx--;
 }
 
 void send_window(){
   printf("Sending window\n");
   for(int i = 0; i < window_pkts_a.size(); i++) {
-    struct pkt pkt = window_pkts_a.at(i);
+    struct pkt_info pkt = window_pkts_a.at(i);
     if(pkt.seqnum == -1) continue;
     if(i==0 ) {
       printf("Resetting timer\n");
@@ -265,7 +259,7 @@ void send_window(){
 }
 
 void send_next_in_q_to_b(){
-  tolayer3(A, pkt_q.front());
+  tolayer3(A, pkt_q.front().pkt);
   pkt_q.pop();
 }
 
@@ -324,6 +318,22 @@ struct pkt make_empty_pkt(int seqnum, int acknum){
   return make_pkt(seqnum, acknum, data);
 }
 
+struct pkt_info make_pkt_info(int seqnum, int acknum, char data[20]){
+  struct pkt_info pkt_in;
+  pkt_in.pkt_acked = false;
+  pkt_in.timeout = get_sim_time() + timeout;
+  pkt_in.pkt = make_pkt(seqnum, acknum, data);
+  return pkt_in;
+}
+
+struct pkt_info make_empty_pkt_info(int seqnum, int acknum){
+  struct pkt_info pkt_in;
+  pkt_in.pkt_acked = false;
+  pkt_in.timeout = -1;
+  pkt_in.pkt = make_empty_pkt(seqnum, acknum);
+  return pkt_in;
+}
+
 
 
 
@@ -340,7 +350,7 @@ void print_ack_vec(){
 void print_window(){
   printf("win size:%d {", window_pkts_a.size());
   for(int i = 0; i < window_pkts_a.size(); i++){
-    printf("%d,", window_pkts_a.at(i).seqnum);
+    printf("%d,", window_pkts_a.at(i).pkt.seqnum);
   }
   printf("}\n");
 

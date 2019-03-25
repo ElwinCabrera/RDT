@@ -22,7 +22,6 @@
 #define A 0
 #define B 1 
 
-
 using std::queue;
 using std::vector;
 

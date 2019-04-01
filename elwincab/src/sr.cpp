@@ -215,6 +215,10 @@ void B_input(struct pkt packet){
   }
   
 
+  
+
+  
+
   if(!seqs_app_recvd.at(packet.seqnum)){ 
     
     printf("Pushing pkt to queue\n");
@@ -266,7 +270,6 @@ void B_input(struct pkt packet){
   }
 
 
-  
   printf("Sending ACK#%d pkt to A\n", last_in_order_seq );
   struct pkt ackpkt  = make_empty_pkt(-1, last_in_order_seq);
   tolayer3(B, ackpkt);
@@ -372,6 +375,7 @@ int compute_checksum(struct pkt pkt){
   checksum += pkt.acknum;
   return ~checksum;   // ones compliment 
 }
+
 
 bool is_valid_pkt(struct pkt pkt){
   int pkt_checksum=0;

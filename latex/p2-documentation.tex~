@@ -1,0 +1,181 @@
+\documentclass[10pt, a4paper]{article}
+
+\usepackage[utf8]{inputenc}
+\usepackage[english]{babel}
+\usepackage[english]{isodate}
+\usepackage[parfill]{parskip}
+\usepackage{graphicx}
+\usepackage[utf8]{inputenc}
+\usepackage[section]{placeins}
+\usepackage{float}
+\usepackage{listings}
+\usepackage{color}
+
+\definecolor{dkgreen}{rgb}{0,0.6,0}
+\definecolor{gray}{rgb}{0.5,0.5,0.5}
+\definecolor{mauve}{rgb}{0.58,0,0.82}
+
+\lstset{
+  frame=tb,
+  language=C++,
+  aboveskip=3mm,
+  belowskip=3mm,
+  showstringspaces=false,
+  columns=flexible,
+  basicstyle={\small\ttfamily},
+  numbers=none,
+  numberstyle=\tiny\color{gray},
+  keywordstyle=\color{blue},
+  commentstyle=\color{dkgreen},
+  stringstyle=\color{mauve},
+  breaklines=true,
+  breakatwhitespace=true,
+  tabsize=3
+}
+
+\author{Elwin Cabrera}
+\title{Alternating-Bit, Go-Back-N, and Selective Repeat Analysis}
+
+\begin{document}
+
+\pagenumbering{Roman}
+
+\maketitle
+\newpage
+
+\tableofcontents
+\newpage
+
+\listoffigures
+\newpage
+
+\pagenumbering{arabic}
+
+\section{Academic Integrity}
+    I have read and understood the course academic integrity policy.
+\section{Protocol Implementations}
+    
+  \subsection{Alternating-Bit}
+    \subsubsection{A Output\label{abt-aout}}
+        The first thing that this function does is wait on some data from layer 5 to be sent to B. The program then encapsulates
+this data into a packet that we can send to layer 3 later. Once the data is in a packet its then put into a queue and if no packets are currently in the link or if the program is not trying to resolve a corrupt packet then we pop that packet from the queue, set our current packet to the packet we just popped, and send it down to layer 3 and start a timer. However, if a packet is currently using the link or if the program is trying to resolve a corrupt packet (can occur under high corruption thus will take long for B to receive a valid packet ) then we just keep that packet in the queue for later transmission.  
+    \subsubsection{A Input\label{abt-ain}}
+        A only gets acknowledgment packets from B so that is the only type of packets that A Input handles. When A Input gets a packet it first checks if that packet is valid and not corrupt. After the validation, it then checks if the acknowledgment number corresponds to the latest packet that A sent. If the acknowledgment number is equal to the last packet A sent, then A will stop the timer and check if the queue has any more packets to transmit if yes then it will pop from the queue, start a timer,  and then send next packet to layer 3.  
+    \subsubsection{A Interrupt\label{abt-aint}}
+        The interrupt mechanism used for this protocol is simple. Every time that A sends a new packet it starts a timer. The only time that the timer is stopped is when A receives an acknowledgment for the current packet and when the A Interrupt function is called. When A Interrupt is called it simply re-transmits the current packet that is saved as a variable as ``struct pkt current\_pkt''.
+    \subsubsection{B Input\label{abt-bin}}
+        When B first gets a packet it checks if the packet is valid and not corrupt and then checks if the packet is a duplicate. If the packet is a duplicate it simply sends an acknowledgment corresponding to that duplicate packet. If the packet if not valid then B will just return. However, if the packet is valid and if it's not a duplicate packet then it sends the data to the application and then sends an acknowledgment packet corresponding the packet B just received. 
+
+  \subsection{Go-back-N}
+    \subsubsection{A Output\label{gbn-aout}}
+        This function is similar to the alternating bit's version of A Output in \ref{abt-aout}, with only two modifications. The first modification is the introduction of a window of packets which is just an array of packets of size N where N is the window size which is specified by the user running the program. The second modification is that instead of having only one packet in the link we can send as many packets to layer 3 as long as the window is not full, if the window is full then we just push that packet in a queue. 
+    \subsubsection{A Input\label{gbn-ain}}
+        This function does something similar to the alternating bit version of A Input in \ref{abt-ain} with only one change. Since we introduced the window we have to check the acknowledgment against the first packet in our window, this is because our window can't move unless the first packet in the window is acknowledged. When the first packet in our window is acknowledged then we shift our window right up until the next unacknowledged packet and then we push more packets into the window if our queue of buffered packets is not empty. An interesting thing that this function does is that if the acknowledgment does not correspond to the first packet in the window then it does nothing this is explained in in the next section \ref{gbn-aint}. 
+    \subsubsection{A Interrupt\label{gbn-aint}}
+        The interrupt mechanism is simple. Whenever a new packet is the first packet in the window then a timer is started. When that timer runs out, which means that the first packet in the window was not acknowledged in time, then A sends all packets that are currently in that window to layer 3. This means that whenever A gets an acknowledgment packet it doesn't care if the acknowledgment packet is not the expected acknowledgment in which case A will just wait for the timer to run out to re-transmit the window. This can be problematic under high loss or high corruption rate as the program will keep sending the entire window often causing long execution time.
+    \subsubsection{B Input\label{gbn-bin}}
+        Here it just checks if the packet is valid, if not then it just finishes and does not send an acknowledgment. Then it checks if the packet just received is a duplicate if it's not then it sends the data to the application. Finally regardless if the packet is a duplicate or not it sends an acknowledgment corresponding to the packet just received.
+
+  \subsection{Selective Repeat}
+    \subsubsection{A Output\label{sr-aout}}
+        The implementation for this function is nearly identical to Go-Back-N's version of A Output  see section \ref{gbn-aout}. The only difference is that a packet is encapsulated in a different structure called ``struct pkt\_info'' and that is what gets pushed to the queue, the struct used is shown below.
+        
+        \begin{lstlisting}
+            struct pkt_info{
+                bool pkt_acked;
+                bool app_deliverd;
+                int timeout;        // <- this is the important part
+                struct pkt pkt;
+            };
+        \end{lstlisting}
+
+        After we put a packet in this structure we set a timeout for that packet by adding the current time and the time interval we want that packet to timeout in the future.
+    \subsubsection{A Input}
+        This function behaves in the same way that Go-Back-N's A Input does in section \ref{gbn-ain}
+    \subsubsection{A Interrupt\label{sr-aint}}
+        The interrupt implementation for this protocol is the most interesting out of all three protocols this is because each packet needs to have its own timer but we only have available one timer interrupt. To achieve this we need a way to implement multiple logical timers from one given timer. What I decided to do was to start the timer once in the beginning and have it interrupt very often endlessly. I decided to have the timer interrupt once every 1-time unit (I could have gone lower if I wanted to be more accurate). Since the timer is interrupting very often all I have to do is have an int or float variable that corresponds to each packet and every time an interrupt happens I check all packets and their timeouts to see if the time at this moment is equal to the packets timeout, if yes then I send that one packet to layer 3. This is why a packet is encapsulated in a different struct because we need to hold extra information about the packet.    
+    \subsubsection{B Input\label{sr-bin}}
+        In the previous protocols, B didn't change much. With selective repeat B now also has a window and its implemented in the same way that A's window is implemented. Another difference from the previous protocols is that whenever B gets a packet that is out of order then it buffers that packet by putting it in a queue so when its time for that packet to be sent to the application B already has it and can deliver it in order right away.
+    
+\section{Experiments}
+    Two experiments were done to test how effective or ineffective each of the three protocols were. Through each experiment three variables were kept constant the total number of messages was 1000 to be sent by entity A, a mean time of 50 between message arrivals (from A’s layer5) and a corruption probability of 0.2. 
+    
+  \subsection{Average Throughput vs Loss Probability}
+    This experiment tests the average throughput on different loss probabilities for protocols Alternating-Bit (\ref{exp1-abt}), Go-Back-N (\ref{exp1-gbn}), and Selective Repeat (\ref{exp1-sr}). The loss probabilities that were measured were 0.1, 0.2, 0.4, 0.6, and 0.8. There were two versions of this experiment done on protocols Go-Back-N (\ref{exp1-gbn}) and Selective Repeat (\ref{exp1-sr}) for window size of 10 and then window size of 50.  Below were the results. 
+    
+    \begin{figure}[H]
+        \includegraphics[width=\textwidth]{exp1-w10.png}
+        \centering
+        \caption{Avg Throughput vs Loss Probability -  Window 10 }
+        \label{fig:exp1-w10}
+    \end{figure}
+    
+    \begin{figure}[H]
+        \includegraphics[width=\textwidth]{exp1-w50.png}
+        \centering
+        \caption{Avg Throughput vs Loss Probability - Window 50 }
+        \label{fig:exp1-w50}
+    \end{figure}
+    
+    \subsubsection{Alternating-Bit\label{exp1-abt}}
+      Before running this experiment I expected for the throughput to decrease when the loss probability was increased for this protocol. After running the experiments and seeing the results we see that the throughput stays relatively high until the loss probability is 0.4 or greater is when you see a significant change in throughput. Also since this protocol does not use window there is only one version of this experiment.
+    
+    \subsubsection{Go-back-N\label{exp1-gbn}}
+        Before running this experiment I expected to see that this protocol would a do a little better than Alternating-Bit in section \ref{exp1-abt}. What we see based on the results shown above is that this protocol only does slightly better than Alternating-Bit, \ref{exp1-abt}. The protocol stays at a higher throughput just a little longer past 0.4 loss probability then the throughput starts to decline at the same rate as in Alternating-Bit. In the first version, where we use window of size 10, we see that there's an increase in throughput right after 0.7 loss probability. This could be due to many factors such as my implementation, randomized sequence packets were bring lost, or even bad code.   
+      
+    \subsubsection{Selective Repeat\label{exp1-sr}}
+    
+        The results for this experiment were very interesting ant not what I predicted before looking at the data. What my thoughts were before I ran this experiment was tat Selective Repeat would do better than all protocols tested previously. The results of this experiment were interesting and not what I was expecting. In the first version with window size of 10 shown in figure \ref{fig:exp1-w10}, the data shows that Selective Repeat did worse than all the last two protocols in the previous sections. This was surprising considering that Selective Repeat had extra functionalities that would help with throughput that the other two protocols didn't. However, a look figure \ref{fig:exp1-w50} showed that this protocol indeed did better than the previous ones as it stayed at high throughput for much longer and declined slowly as the loss probability went up. A possible explanation in such a big difference between the two version could be that Selective Repeat does not do well when the window size is low, I con
+    
+  \subsection{Average Throughput vs Window Size}
+    This experiment tests the average throughput on different window sizes for protocols Alternating-Bit (\ref{exp1-abt}), Go-Back-N (\ref{exp1-gbn}), and Selective Repeat (\ref{exp1-sr}). The window sizes that were measured were 10, 50, 100, 200, and 500. There were 3 versions of this experiment each with different loss probabilities done on all three protocols they were loss of 0.2, 0.5, and 0.8. Below were the Results of all the three protocols with different loss probability conditions. 
+    
+    \begin{figure}[H]
+        \includegraphics[width=\textwidth]{exp2-l(0.2).png}
+        \centering
+        \caption{Avg Throughput vs Window Size - Loss 0.2 }
+        \label{fig:exp2-l0.2}
+    \end{figure}
+      
+    \begin{figure}[H]
+        \includegraphics[width=\textwidth]{exp2-l(0.5).png}
+        \centering
+        \caption{Avg Throughput vs Window Size - Loss 0.5  }
+        \label{fig:exp2-l0.5}
+    \end{figure}
+        
+    \begin{figure}[H]
+        \includegraphics[width=\textwidth]{exp2-l(0.8).png}
+        \centering
+        \caption{Avg Throughput vs Window Size - Loss 0.8 }
+        \label{fig:exp2-l0.8}
+    \end{figure}
+    
+    \subsubsection{Alternating-Bit}
+    
+    
+        Since this protocol does not depend on the window size it was expected that for each condition that the throughput would remain constant. The data in figures \ref{fig:exp2-l0.2}, \ref{fig:exp2-l0.5}, and \ref{fig:exp2-l0.8} indeed that this protocol stayed constant when the window size changed with only slight variations in throughput when the loss probability changed. 
+        
+      
+    \subsubsection{Go-back-N}
+    
+        According to the data figures \ref{fig:exp2-l0.2}, \ref{fig:exp2-l0.5}, and \ref{fig:exp2-l0.8} this protocol only does well when the window size and loss probabilities are small. When the window size gets too big and the loss probability increases the throughput approaches zero. This is due to the fact that when the timer expires for the first packet in the window then the entire window is sent, this can be problematic when you have a big window and a high loss probability.  
+        
+        
+    \subsubsection{Selective Repeat}
+    
+        As always selective repeat gives is interesting results. We can see from the data that selective repeat does better than the other two protocols the majority of the time. The reason why the results from this experiments were interesting were because surprisingly this protocol did worse than the other two when the window size was small (less than 50) but better when it was large (grater than 50). This confirms my earlier inference in section \ref{exp1-sr} from the first experiment.
+    
+       
+
+  \subsection{Experiment 3}
+    \subsubsection{Alternating-Bit}
+    \subsubsection{Go-back-N}
+    \subsubsection{Selective Repeat}
+    
+  \subsection{Experiment 4}
+    \subsubsection{Alternating-Bit}
+    \subsubsection{Go-back-N}
+    \subsubsection{Selective Repeat}
+
+\end{document}
